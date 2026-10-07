@@ -125,6 +125,48 @@ CREATE TABLE IF NOT EXISTS shadow_candidates (
     UNIQUE(strategy_name,strategy_version,symbol,side,bar_open_time)
 );
 CREATE INDEX IF NOT EXISTS idx_shadow_candidates_pending ON shadow_candidates(outcome_status, ts);
+CREATE TABLE IF NOT EXISTS paper_funding_events (
+    id BIGSERIAL PRIMARY KEY,
+    position_id TEXT NOT NULL REFERENCES paper_positions(id),
+    funding_time BIGINT NOT NULL,
+    symbol TEXT NOT NULL,
+    rate DOUBLE PRECISION NOT NULL,
+    mark_price DOUBLE PRECISION NOT NULL,
+    payment DOUBLE PRECISION NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(position_id, funding_time)
+);
+CREATE TABLE IF NOT EXISTS reconciliation_snapshots (
+    id BIGSERIAL PRIMARY KEY,
+    ts TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    ok BOOLEAN NOT NULL,
+    payload JSONB NOT NULL
+);
+CREATE TABLE IF NOT EXISTS live_position_registry (
+    symbol TEXT PRIMARY KEY,
+    status TEXT NOT NULL DEFAULT 'CLOSED',
+    side TEXT,
+    qty DOUBLE PRECISION,
+    entry_order_client_id TEXT,
+    stop_order_client_id TEXT,
+    tp_order_client_id TEXT,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS legacy_calibration_records (
+    source_id TEXT PRIMARY KEY,
+    source_sheet TEXT NOT NULL,
+    imported_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    symbol TEXT,
+    side TEXT,
+    decision TEXT,
+    outcome TEXT,
+    entry DOUBLE PRECISION,
+    stop DOUBLE PRECISION,
+    target DOUBLE PRECISION,
+    leverage INTEGER,
+    liquidation_price DOUBLE PRECISION,
+    payload JSONB NOT NULL
+);
 CREATE TABLE IF NOT EXISTS position_events (
     id BIGSERIAL PRIMARY KEY,
     position_id TEXT NOT NULL REFERENCES paper_positions(id),
@@ -138,6 +180,9 @@ CREATE TABLE IF NOT EXISTS position_events (
 def init_db(database_url: str, paper_starting_equity: float = 100.0) -> None:
     with psycopg.connect(database_url, autocommit=True) as conn:
         conn.execute(SCHEMA_SQL)
+        conn.execute("ALTER TABLE paper_positions ADD COLUMN IF NOT EXISTS funding_pnl DOUBLE PRECISION NOT NULL DEFAULT 0")
+        conn.execute("ALTER TABLE paper_positions ADD COLUMN IF NOT EXISTS entry_slippage_bps DOUBLE PRECISION NOT NULL DEFAULT 0")
+        conn.execute("ALTER TABLE paper_positions ADD COLUMN IF NOT EXISTS exit_slippage_bps DOUBLE PRECISION NOT NULL DEFAULT 0")
         conn.execute(
             """INSERT INTO paper_account
             (id,starting_equity,cash_balance,peak_equity,daily_start_equity)

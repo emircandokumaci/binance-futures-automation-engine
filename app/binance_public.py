@@ -13,6 +13,12 @@ class MarketDataState:
     last_message_ts: float = 0.0
     reconnects: int = 0
     mark_prices: dict[str, float] = field(default_factory=dict)
+    book_bid: dict[str, float] = field(default_factory=dict)
+    book_ask: dict[str, float] = field(default_factory=dict)
+    book_bid_qty: dict[str, float] = field(default_factory=dict)
+    book_ask_qty: dict[str, float] = field(default_factory=dict)
+    funding_rate: dict[str, float] = field(default_factory=dict)
+    next_funding_time: dict[str, int] = field(default_factory=dict)
     last_error: str = ""
 
     def tick_age_seconds(self) -> float | None:
@@ -99,7 +105,11 @@ class BinancePublicClient:
         return await self._get("/fapi/v1/klines", params)
 
     async def run_mark_price_stream(self, symbols: tuple[str, ...]) -> None:
-        streams = "/".join(f"{s.lower()}@markPrice@1s" for s in symbols)
+        stream_names = []
+        for s in symbols:
+            stream_names.append(f"{s.lower()}@markPrice@1s")
+            stream_names.append(f"{s.lower()}@bookTicker")
+        streams = "/".join(stream_names)
         url = f"{self.ws_base}/stream?streams={streams}"
         backoff = 1
         while True:
@@ -118,9 +128,22 @@ class BinancePublicClient:
                         payload = json.loads(raw)
                         data = payload.get("data", payload)
                         symbol = data.get("s")
+                        if not symbol:
+                            continue
+                        event = data.get("e")
                         mark = data.get("p")
-                        if symbol and mark:
+                        if mark is not None:
                             self.state.mark_prices[symbol] = float(mark)
+                            if data.get("r") is not None:
+                                self.state.funding_rate[symbol] = float(data.get("r"))
+                            if data.get("T") is not None:
+                                self.state.next_funding_time[symbol] = int(data.get("T"))
+                            self.state.last_message_ts = time.time()
+                        if event == "bookTicker" or (data.get("b") is not None and data.get("a") is not None):
+                            self.state.book_bid[symbol] = float(data.get("b"))
+                            self.state.book_ask[symbol] = float(data.get("a"))
+                            self.state.book_bid_qty[symbol] = float(data.get("B") or 0)
+                            self.state.book_ask_qty[symbol] = float(data.get("A") or 0)
                             self.state.last_message_ts = time.time()
             except asyncio.CancelledError:
                 self.state.connected = False

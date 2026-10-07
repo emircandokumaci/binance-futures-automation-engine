@@ -10,6 +10,10 @@ class Settings(BaseSettings):
     database_url: str
     binance_fapi_base: str = "https://fapi.binance.com"
     binance_ws_base: str = "wss://fstream.binance.com/market"
+    binance_api_key: str = ""
+    binance_api_secret: str = ""
+    binance_recv_window: int = 5000
+    private_reconcile_interval_seconds: int = 15
 
     no_new_trades_start: str = "08:00"
     no_new_trades_end: str = "09:00"
@@ -34,6 +38,10 @@ class Settings(BaseSettings):
     min_listing_age_days: int = 30
     shadow_outcome_horizon_hours: int = 24
     require_liquidation_brackets_for_live: bool = True
+    min_liquidation_buffer_pct: float = 7.5
+    min_liquidation_stop_multiple: float = 2.5
+    dynamic_slippage_floor_bps: float = 0.5
+    dynamic_slippage_cap_bps: float = 25.0
 
     model_config = SettingsConfigDict(case_sensitive=False)
 
