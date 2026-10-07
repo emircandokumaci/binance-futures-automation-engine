@@ -11,6 +11,7 @@ from psycopg.rows import dict_row
 from .binance_public import BinancePublicClient
 from .indicators import atr, ema, mean
 from .models import Side, Signal
+from .market_context import MarketContextEngine
 
 
 @dataclass
@@ -43,7 +44,7 @@ def parse_closed_klines(raw: list[list], now_ms: int) -> list[Candle]:
 
 class TrendBreakoutShadowV1:
     name = 'trend_breakout_shadow'
-    version = '0.1.0'
+    version = '0.2.0'
 
     def evaluate(self, symbol: str, bars15: list[Candle], bars1h: list[Candle], bars4h: list[Candle]) -> Signal | None:
         if min(len(bars15), len(bars1h), len(bars4h)) < 55:
@@ -129,6 +130,7 @@ class ShadowScanner:
         self.market = market
         self.strategy = TrendBreakoutShadowV1()
         self.semaphore = asyncio.Semaphore(concurrency)
+        self.context = MarketContextEngine(market)
 
     async def scan_symbol(self, symbol: str, now_ms: int) -> Signal | None:
         async with self.semaphore:
@@ -144,6 +146,7 @@ class ShadowScanner:
 
     async def scan(self, symbols: list[str]) -> list[Signal]:
         now_ms = await self.market.server_time()
+        reference_regime = await self.context.reference_regime()
         results = await asyncio.gather(
             *(self.scan_symbol(symbol, now_ms) for symbol in symbols),
             return_exceptions=True,
@@ -154,6 +157,22 @@ class ShadowScanner:
                 self._log_error(symbol, result)
                 continue
             if result is not None:
+                try:
+                    ctx = await self.context.collect(symbol)
+                    opp = self.context.assess(result, ctx, reference_regime)
+                    meta = json.loads(result.reason)
+                    meta['opportunity_v2'] = opp.to_dict()
+                    result = result.model_copy(update={'confidence': opp.score / 100.0, 'reason': json.dumps(meta, separators=(',', ':'))})
+                    if not opp.approved:
+                        with psycopg.connect(self.database_url, autocommit=True) as conn:
+                            conn.execute(
+                                "INSERT INTO system_events(event_type,payload) VALUES('SHADOW_OPPORTUNITY_REJECTED',%s::jsonb)",
+                                (json.dumps({'symbol': symbol, 'side': result.side.value, 'score': opp.score, 'assessment': opp.to_dict()}),),
+                            )
+                        continue
+                except Exception as exc:
+                    self._log_error(symbol, exc)
+                    continue
                 self._persist(result)
                 signals.append(result)
         return signals

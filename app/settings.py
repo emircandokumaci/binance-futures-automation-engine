@@ -16,6 +16,8 @@ class Settings(BaseSettings):
 
     default_risk_pct: float = 1.0
     max_risk_pct: float = 2.0
+    confidence_risk_scaling_enabled: bool = False
+    confidence_leverage_scaling_enabled: bool = False
     normal_max_leverage: int = 5
     absolute_max_leverage: int = 10
     max_portfolio_gross_leverage: float = 3.0

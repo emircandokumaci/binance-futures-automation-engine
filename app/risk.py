@@ -7,7 +7,7 @@ from .settings import Settings
 
 
 FRICTION_RATE = 0.001
-MIN_REWARD_RISK = 1.5
+MIN_REWARD_RISK = 2.0
 
 
 def _valid_levels(signal: Signal) -> bool:
@@ -27,15 +27,16 @@ def _select_leverage(signal: Signal, account: AccountState, cfg: Settings) -> in
     rr = _reward_risk(signal)
     if signal.volatility_pct > 6:
         lev = 2
-    elif signal.confidence >= 0.80 and signal.volatility_pct <= 3.5 and rr >= 2.0:
+    elif cfg.confidence_leverage_scaling_enabled and signal.confidence >= 0.80 and signal.volatility_pct <= 3.5 and rr >= 2.0:
         lev = min(5, cfg.normal_max_leverage)
     if (
-        signal.confidence >= 0.92
+        cfg.confidence_leverage_scaling_enabled
+        and signal.confidence >= 0.92
         and signal.volatility_pct <= 2.0
         and rr >= 2.5
         and account.drawdown_pct < 5.0
     ):
-        lev = min(7, cfg.absolute_max_leverage)
+        lev = min(5, cfg.normal_max_leverage)
     if account.drawdown_pct >= 10.0:
         lev = min(lev, 3)
     return max(1, min(lev, cfg.absolute_max_leverage))
@@ -71,10 +72,11 @@ def assess_signal(
         return RiskAssessment(approved=False, reason="INVALID_STOP_DISTANCE")
 
     requested_risk_pct = cfg.default_risk_pct
-    if signal.confidence >= 0.88 and rr >= 2.0 and account.drawdown_pct < 5:
-        requested_risk_pct = min(1.5, cfg.max_risk_pct)
-    if signal.confidence >= 0.94 and rr >= 2.5 and signal.volatility_pct <= 2.5:
-        requested_risk_pct = min(2.0, cfg.max_risk_pct)
+    if cfg.confidence_risk_scaling_enabled:
+        if signal.confidence >= 0.88 and rr >= 2.0 and account.drawdown_pct < 5:
+            requested_risk_pct = min(1.5, cfg.max_risk_pct)
+        if signal.confidence >= 0.94 and rr >= 2.5 and signal.volatility_pct <= 2.5:
+            requested_risk_pct = min(2.0, cfg.max_risk_pct)
 
     risk_usdt = account.equity * requested_risk_pct / 100.0
     notional = risk_usdt / (stop_pct + FRICTION_RATE)
