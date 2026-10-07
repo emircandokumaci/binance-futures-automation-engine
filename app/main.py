@@ -17,6 +17,8 @@ from .safety import enforce_phase_one_safety
 from .schedule import no_new_trades_window
 from .settings import settings
 from .shadow import ShadowScanner, recent_signals
+from .outcomes import ShadowOutcomeTracker, outcome_stats
+from .liquidation import LiquidationBracketStore
 
 market = BinancePublicClient(settings.binance_fapi_base, settings.binance_ws_base)
 paper = PaperExecutor(
@@ -28,9 +30,12 @@ paper = PaperExecutor(
 )
 account = PaperAccountService(settings.database_url, settings.tz)
 shadow = ShadowScanner(settings.database_url, market, concurrency=5)
+outcomes = ShadowOutcomeTracker(settings.database_url, market, settings.shadow_outcome_horizon_hours)
+liquidation_brackets = LiquidationBracketStore()
 market_task: asyncio.Task | None = None
 paper_task: asyncio.Task | None = None
 shadow_task: asyncio.Task | None = None
+outcome_task: asyncio.Task | None = None
 liquid_universe: list[dict] = []
 selected_symbols: list[str] = []
 last_shadow_bucket: str | None = None
@@ -105,9 +110,23 @@ async def shadow_scheduler_loop() -> None:
             await asyncio.sleep(30.0)
 
 
+async def outcome_tracker_loop() -> None:
+    while True:
+        try:
+            results = await outcomes.run_once(30)
+            if results:
+                log_event(settings.database_url, 'SHADOW_OUTCOME_UPDATE', {'count': len(results), 'results': results[:10]})
+            await asyncio.sleep(300.0)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            log_event(settings.database_url, 'SHADOW_OUTCOME_ERROR', {'error': f'{type(exc).__name__}: {exc}'})
+            await asyncio.sleep(60.0)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global market_task, paper_task, shadow_task, liquid_universe, selected_symbols
+    global market_task, paper_task, shadow_task, outcome_task, liquid_universe, selected_symbols
     enforce_phase_one_safety(settings)
     init_db(settings.database_url, settings.paper_starting_equity)
 
@@ -135,13 +154,14 @@ async def lifespan(app: FastAPI):
     )
     paper_task = asyncio.create_task(paper_monitor_loop())
     shadow_task = asyncio.create_task(shadow_scheduler_loop())
+    outcome_task = asyncio.create_task(outcome_tracker_loop())
     try:
         yield
     finally:
-        for task in (shadow_task, paper_task, market_task):
+        for task in (outcome_task, shadow_task, paper_task, market_task):
             if task:
                 task.cancel()
-        for task in (shadow_task, paper_task, market_task):
+        for task in (outcome_task, shadow_task, paper_task, market_task):
             if task:
                 try:
                     await task
@@ -150,7 +170,7 @@ async def lifespan(app: FastAPI):
         log_event(settings.database_url, 'ENGINE_STOPPED', {'paper_only': True})
 
 
-app = FastAPI(title='Jarvis Futures Engine', version='0.5.0', lifespan=lifespan)
+app = FastAPI(title='Jarvis Futures Engine', version='0.5.2', lifespan=lifespan)
 
 
 def current_account_payload() -> dict:
@@ -197,6 +217,7 @@ def status():
         'last_error': market.state.last_error,
         'selected_universe_count': len(selected_symbols),
         'shadow_strategy': {'name': shadow.strategy.name, 'version': shadow.strategy.version, 'auto_execute': False},
+        'liquidation_guard': liquidation_brackets.status(selected_symbols),
         'paper_account': current_account_payload(),
     }
 
@@ -223,6 +244,11 @@ def universe():
 @app.get('/paper/account')
 def paper_account():
     return current_account_payload()
+
+
+@app.get('/risk/liquidation/status')
+def liquidation_status():
+    return liquidation_brackets.status(selected_symbols)
 
 
 @app.post('/risk/preview')
@@ -281,3 +307,14 @@ async def shadow_run():
 @app.get('/shadow/signals')
 def shadow_signals(limit: int = 50):
     return {'signals': recent_signals(settings.database_url, limit)}
+
+
+@app.post('/shadow/outcomes/run')
+async def shadow_outcomes_run():
+    results = await outcomes.run_once(50)
+    return {'updated': len(results), 'results': results}
+
+
+@app.get('/shadow/outcomes/stats')
+def shadow_outcomes_stats():
+    return outcome_stats(settings.database_url)

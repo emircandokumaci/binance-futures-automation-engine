@@ -32,6 +32,8 @@ class Settings(BaseSettings):
     min_quote_volume_usdt: float = 50_000_000.0
     max_spread_bps: float = 8.0
     min_listing_age_days: int = 30
+    shadow_outcome_horizon_hours: int = 24
+    require_liquidation_brackets_for_live: bool = True
 
     model_config = SettingsConfigDict(case_sensitive=False)
 

@@ -92,6 +92,12 @@ class BinancePublicClient:
     async def ticker_24h_symbol(self, symbol: str) -> dict:
         return await self._get("/fapi/v1/ticker/24hr", {"symbol": symbol})
 
+    async def klines_range(self, symbol: str, interval: str, start_time: int, end_time: int | None = None, limit: int = 1500) -> list[list]:
+        params = {"symbol": symbol, "interval": interval, "startTime": start_time, "limit": limit}
+        if end_time is not None:
+            params["endTime"] = end_time
+        return await self._get("/fapi/v1/klines", params)
+
     async def run_mark_price_stream(self, symbols: tuple[str, ...]) -> None:
         streams = "/".join(f"{s.lower()}@markPrice@1s" for s in symbols)
         url = f"{self.ws_base}/stream?streams={streams}"

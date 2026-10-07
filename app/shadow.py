@@ -163,6 +163,7 @@ class ShadowScanner:
                     meta = json.loads(result.reason)
                     meta['opportunity_v2'] = opp.to_dict()
                     result = result.model_copy(update={'confidence': opp.score / 100.0, 'reason': json.dumps(meta, separators=(',', ':'))})
+                    self._persist_candidate(result, opp)
                     if not opp.approved:
                         with psycopg.connect(self.database_url, autocommit=True) as conn:
                             conn.execute(
@@ -176,6 +177,21 @@ class ShadowScanner:
                 self._persist(result)
                 signals.append(result)
         return signals
+
+    def _persist_candidate(self, signal: Signal, opp) -> None:
+        meta = json.loads(signal.reason)
+        bar_open_time = datetime.fromtimestamp(meta['bar_open_time'] / 1000, tz=timezone.utc)
+        with psycopg.connect(self.database_url, autocommit=True) as conn:
+            conn.execute(
+                """INSERT INTO shadow_candidates
+                (bar_open_time,strategy_name,strategy_version,symbol,side,entry,stop,target,volatility_pct,opportunity_score,opportunity_approved,reason)
+                VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)
+                ON CONFLICT (strategy_name,strategy_version,symbol,side,bar_open_time) DO UPDATE SET
+                  opportunity_score=EXCLUDED.opportunity_score,
+                  opportunity_approved=EXCLUDED.opportunity_approved,
+                  reason=EXCLUDED.reason""",
+                (bar_open_time,self.strategy.name,self.strategy.version,signal.symbol,signal.side.value,signal.entry,signal.stop,signal.target,signal.volatility_pct,opp.score,opp.approved,signal.reason),
+            )
 
     def _persist(self, signal: Signal) -> None:
         meta = json.loads(signal.reason)

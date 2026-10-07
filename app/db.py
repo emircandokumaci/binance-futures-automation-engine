@@ -100,6 +100,31 @@ CREATE TABLE IF NOT EXISTS shadow_signals (
     UNIQUE(strategy_name,strategy_version,symbol,side,bar_open_time)
 );
 CREATE INDEX IF NOT EXISTS idx_shadow_signals_ts ON shadow_signals(ts DESC);
+CREATE TABLE IF NOT EXISTS shadow_candidates (
+    id BIGSERIAL PRIMARY KEY,
+    ts TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    bar_open_time TIMESTAMPTZ NOT NULL,
+    strategy_name TEXT NOT NULL,
+    strategy_version TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    side TEXT NOT NULL CHECK (side IN ('LONG','SHORT')),
+    entry DOUBLE PRECISION NOT NULL,
+    stop DOUBLE PRECISION NOT NULL,
+    target DOUBLE PRECISION NOT NULL,
+    volatility_pct DOUBLE PRECISION NOT NULL,
+    opportunity_score DOUBLE PRECISION,
+    opportunity_approved BOOLEAN NOT NULL DEFAULT FALSE,
+    reason JSONB NOT NULL,
+    outcome_status TEXT NOT NULL DEFAULT 'PENDING' CHECK (outcome_status IN ('PENDING','TP_FIRST','SL_FIRST','AMBIGUOUS','TIMEOUT')),
+    mfe_pct DOUBLE PRECISION NOT NULL DEFAULT 0,
+    mae_pct DOUBLE PRECISION NOT NULL DEFAULT 0,
+    mfe_r DOUBLE PRECISION NOT NULL DEFAULT 0,
+    mae_r DOUBLE PRECISION NOT NULL DEFAULT 0,
+    bars_observed INTEGER NOT NULL DEFAULT 0,
+    resolved_at TIMESTAMPTZ,
+    UNIQUE(strategy_name,strategy_version,symbol,side,bar_open_time)
+);
+CREATE INDEX IF NOT EXISTS idx_shadow_candidates_pending ON shadow_candidates(outcome_status, ts);
 CREATE TABLE IF NOT EXISTS position_events (
     id BIGSERIAL PRIMARY KEY,
     position_id TEXT NOT NULL REFERENCES paper_positions(id),
