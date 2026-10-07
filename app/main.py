@@ -233,7 +233,7 @@ async def lifespan(app: FastAPI):
         log_event(settings.database_url, 'ENGINE_STOPPED', {'paper_only': True})
 
 
-app = FastAPI(title='Jarvis Futures Engine', version='0.6.1', lifespan=lifespan)
+app = FastAPI(title='Jarvis Futures Engine', version='0.6.2', lifespan=lifespan)
 
 
 def current_account_payload() -> dict:

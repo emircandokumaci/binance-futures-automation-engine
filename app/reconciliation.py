@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 
@@ -15,6 +16,8 @@ class ReconciliationService:
         self.last_run_ts = 0.0
         self.last_error = ''
         self.last_result: dict = {'configured': client.configured, 'ok': False, 'reason': 'NOT_RUN'}
+        self._last_persist_fingerprint = ''
+        self._last_persist_ts = 0.0
 
     async def run_once(self) -> dict:
         if not self.client.configured:
@@ -45,14 +48,21 @@ class ReconciliationService:
                     'managed_symbols': sorted(managed),
                     'unmanaged_positions': unmanaged,
                 }
-                conn.execute(
-                    "INSERT INTO reconciliation_snapshots(ok,payload) VALUES(%s,%s::jsonb)",
-                    (not unmanaged, json.dumps(payload)),
-                )
-                conn.execute(
-                    "INSERT INTO system_events(event_type,payload) VALUES(%s,%s::jsonb)",
-                    ('RECONCILIATION_OK' if not unmanaged else 'RECONCILIATION_UNMANAGED_POSITION', json.dumps(payload)),
-                )
+                canonical = json.dumps(payload, sort_keys=True, separators=(',', ':'))
+                fingerprint = hashlib.sha256(canonical.encode()).hexdigest()
+                now = time.time()
+                should_persist = (fingerprint != self._last_persist_fingerprint) or (now - self._last_persist_ts >= 300.0)
+                if should_persist:
+                    conn.execute(
+                        "INSERT INTO reconciliation_snapshots(ok,payload) VALUES(%s,%s::jsonb)",
+                        (not unmanaged, canonical),
+                    )
+                    conn.execute(
+                        "INSERT INTO system_events(event_type,payload) VALUES(%s,%s::jsonb)",
+                        ('RECONCILIATION_OK' if not unmanaged else 'RECONCILIATION_UNMANAGED_POSITION', canonical),
+                    )
+                    self._last_persist_fingerprint = fingerprint
+                    self._last_persist_ts = now
             self.last_run_ts = time.time()
             self.last_error = ''
             self.last_result = {'configured': True, 'ok': not unmanaged, **payload}
